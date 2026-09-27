@@ -248,6 +248,35 @@ async fn long_list_in_one_burst_is_not_truncated() {
     mock.abort();
 }
 
+/// panel-olt fork: `print count-only` responde con `!done =ret=<n>`: el número llega en el
+/// evento `Done`.
+#[tokio::test]
+async fn count_only_ret_arrives_in_done() {
+    let (listener, addr) = mock_listener().await;
+    let mock = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut mock = MockStream::new(stream);
+        let words = mock.read_sentence().await;
+        let login_tag = extract_tag(&words);
+        mock.write_all(&encode_done(&login_tag)).await;
+        let words = mock.read_sentence().await;
+        assert_eq!(words[0], "/ip/firewall/connection/print");
+        let cmd_tag = extract_tag(&words);
+        let tag_word = format!(".tag={cmd_tag}");
+        mock.write_all(&encode_sentence(&[b"!done", b"=ret=2050", tag_word.as_bytes()])).await;
+        let _ = mock.read_sentence().await;
+    });
+    let device = MikrotikDevice::connect(&addr, "admin", Some("password")).await.unwrap();
+    let cmd = CommandBuilder::new().command("/ip/firewall/connection/print").attribute("count-only", None).build();
+    let mut rx = device.send_command(cmd).await.unwrap();
+    match rx.recv().await.expect("done") {
+        Event::Done { attributes, .. } => assert_eq!(attributes.get("ret"), Some(&Some("2050".to_string()))),
+        other => panic!("evento inesperado: {other:?}"),
+    }
+    drop(device);
+    mock.abort();
+}
+
 #[tokio::test]
 async fn login_failure() {
     let (listener, addr) = mock_listener().await;

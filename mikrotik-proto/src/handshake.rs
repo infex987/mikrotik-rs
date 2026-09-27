@@ -107,7 +107,7 @@ impl Handshaking {
     pub fn advance(mut self) -> Result<LoginProgress, LoginError> {
         while let Some(event) = self.inner.poll_event() {
             match event {
-                Event::Done { tag } if tag == self.login_tag => {
+                Event::Done { tag, .. } if tag == self.login_tag => {
                     return Ok(LoginProgress::Complete(Authenticated { inner: self.inner }));
                 }
                 Event::Trap { tag, response } if tag == self.login_tag => {

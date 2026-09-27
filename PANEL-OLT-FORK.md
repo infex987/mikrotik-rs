@@ -17,5 +17,11 @@ panel-olt (mf-Dashboard) para su propio uso.
   - Test nuevo: `long_list_in_one_burst_is_not_truncated` (100 filas en una ráfaga). Falla con el
     código original.
 
+- **`mikrotik-proto` (`v0.7.0-panel.2`): el `!done` conserva sus atributos.** `DoneResponse.attributes`
+  y `Event::Done { tag, attributes }`. Así llega el `=ret=` de `print count-only`, por ejemplo el
+  conteo de conexiones de conntrack por marca. Antes solo se aceptaba el tag detrás de `!done` y
+  el resto se perdía. Tests: `test_parse_done_with_ret_in_any_order` y
+  `count_only_ret_arrives_in_done`.
+
 Las versiones de los crates **no cambian**, porque el panel las usa mediante `[patch.crates-io]`
 fijado a un commit de esta rama.

@@ -30,7 +30,7 @@
 //! while let Some(event) = conn.poll_event() {
 //!     match event {
 //!         Event::Reply { tag, response } => { /* handle streaming reply */ }
-//!         Event::Done { tag } => { /* command completed */ }
+//!         Event::Done { tag, .. } => { /* command completed */ }
 //!         Event::Trap { tag, response } => { /* handle error */ }
 //!         Event::Fatal { reason } => { /* connection dead */ }
 //!         Event::Empty { tag } => { /* empty response */ }
@@ -69,6 +69,9 @@ pub enum Event {
     Done {
         /// The command tag that completed.
         tag: Tag,
+        /// Attributes of the `!done` sentence (panel-olt fork), e.g. `ret` from a
+        /// `print count-only`. Empty for most commands.
+        attributes: HashMap<String, Option<String>>,
     },
 
     /// An empty response was received (`RouterOS` 7.18+).
@@ -372,7 +375,7 @@ impl Connection {
             CommandResponse::Done(done) => {
                 let tag = done.tag;
                 self.in_flight.remove(&tag);
-                self.events.push_back(Event::Done { tag });
+                self.events.push_back(Event::Done { tag, attributes: done.attributes });
             }
 
             CommandResponse::Empty(empty) => {
@@ -501,7 +504,7 @@ mod tests {
         conn.receive(&wire).unwrap();
 
         match conn.poll_event().unwrap() {
-            Event::Done { tag: t } => assert_eq!(t, tag),
+            Event::Done { tag: t, .. } => assert_eq!(t, tag),
             other => panic!("expected Done, got {other:?}"),
         }
         assert_eq!(conn.in_flight_count(), 0);
@@ -566,7 +569,7 @@ mod tests {
 
         // Done
         match conn.poll_event().unwrap() {
-            Event::Done { tag: t } => assert_eq!(t, tag),
+            Event::Done { tag: t, .. } => assert_eq!(t, tag),
             other => panic!("expected Done, got {other:?}"),
         }
 
@@ -633,7 +636,7 @@ mod tests {
         }
 
         match conn.poll_event().unwrap() {
-            Event::Done { tag: t } => assert_eq!(t, tag),
+            Event::Done { tag: t, .. } => assert_eq!(t, tag),
             other => panic!("expected Done, got {other:?}"),
         }
     }
@@ -693,11 +696,11 @@ mod tests {
 
         // Should get both events
         match conn.poll_event().unwrap() {
-            Event::Done { tag } => assert_eq!(tag, tag1),
+            Event::Done { tag, .. } => assert_eq!(tag, tag1),
             other => panic!("expected Done for tag1, got {other:?}"),
         }
         match conn.poll_event().unwrap() {
-            Event::Done { tag } => assert_eq!(tag, tag2),
+            Event::Done { tag, .. } => assert_eq!(tag, tag2),
             other => panic!("expected Done for tag2, got {other:?}"),
         }
         assert_eq!(conn.in_flight_count(), 0);

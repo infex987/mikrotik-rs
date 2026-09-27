@@ -129,7 +129,7 @@ fn full_command_lifecycle() {
 
     // Second event: Done
     match &events[1] {
-        Event::Done { tag: t } => assert_eq!(*t, tag),
+        Event::Done { tag: t, .. } => assert_eq!(*t, tag),
         other => panic!("expected Done, got {other:?}"),
     }
 
@@ -194,7 +194,7 @@ fn handshake_then_commands() {
         other => panic!("expected Reply, got {other:?}"),
     }
     match &events[1] {
-        Event::Done { tag: t } => assert_eq!(*t, tag),
+        Event::Done { tag: t, .. } => assert_eq!(*t, tag),
         other => panic!("expected Done, got {other:?}"),
     }
 }
@@ -249,7 +249,7 @@ fn concurrent_multiplexing() {
     }
     // Event 2: Done for tag2
     match &events[2] {
-        Event::Done { tag } => assert_eq!(*tag, tag2),
+        Event::Done { tag, .. } => assert_eq!(*tag, tag2),
         other => panic!("expected Done for tag2, got {other:?}"),
     }
     // Event 3: Reply for tag3
@@ -259,12 +259,12 @@ fn concurrent_multiplexing() {
     }
     // Event 4: Done for tag1
     match &events[4] {
-        Event::Done { tag } => assert_eq!(*tag, tag1),
+        Event::Done { tag, .. } => assert_eq!(*tag, tag1),
         other => panic!("expected Done for tag1, got {other:?}"),
     }
     // Event 5: Done for tag3
     match &events[5] {
-        Event::Done { tag } => assert_eq!(*tag, tag3),
+        Event::Done { tag, .. } => assert_eq!(*tag, tag3),
         other => panic!("expected Done for tag3, got {other:?}"),
     }
 
@@ -349,7 +349,7 @@ fn byte_at_a_time() {
     let events = drain_events(&mut conn);
     assert_eq!(events.len(), 1);
     match &events[0] {
-        Event::Done { tag: t } => assert_eq!(*t, tag),
+        Event::Done { tag: t, .. } => assert_eq!(*t, tag),
         other => panic!("expected Done, got {other:?}"),
     }
 }
@@ -390,7 +390,7 @@ fn back_to_back_streaming_replies() {
     }
 
     match &events[10] {
-        Event::Done { tag: t } => assert_eq!(*t, tag),
+        Event::Done { tag: t, .. } => assert_eq!(*t, tag),
         other => panic!("expected Done, got {other:?}"),
     }
 }

@@ -75,15 +75,27 @@ impl CommandResponse {
 
         match category {
             WordCategory::Done => {
-                let word = words
-                    .next()
-                    .ok_or::<ProtocolError>(MissingWord::Tag.into())??;
-
-                let tag = word.tag().ok_or(ProtocolError::WordSequence {
-                    word: word.into(),
-                    expected: alloc::vec![WordType::Tag],
-                })?;
-                Ok(CommandResponse::Done(DoneResponse { tag }))
+                // panel-olt fork: el `!done` puede traer atributos además del tag (p. ej.
+                // `=ret=2050` de un `print count-only`), en cualquier orden. Antes solo se
+                // aceptaba el tag justo detrás de `!done` y el `=ret=` se perdía.
+                let mut tag = None;
+                let mut attributes = HashMap::<String, Option<String>>::new();
+                for word in words {
+                    match word? {
+                        Word::Tag(t) => tag = Some(t),
+                        Word::Attribute(WordAttribute { key, value, .. }) => {
+                            attributes.insert(String::from(key), value.map(String::from));
+                        }
+                        word => {
+                            return Err(ProtocolError::WordSequence {
+                                word: word.into(),
+                                expected: alloc::vec![WordType::Tag, WordType::Attribute],
+                            });
+                        }
+                    }
+                }
+                let tag = tag.ok_or::<ProtocolError>(MissingWord::Tag.into())?;
+                Ok(CommandResponse::Done(DoneResponse { tag, attributes }))
             }
             WordCategory::Reply => {
                 let mut tag = None;
@@ -197,6 +209,9 @@ impl CommandResponse {
 pub struct DoneResponse {
     /// The tag associated with the command.
     pub tag: Tag,
+    /// Attributes carried by the `!done` sentence (panel-olt fork), e.g. `ret` from a
+    /// `print count-only`. Empty for most commands.
+    pub attributes: HashMap<String, Option<String>>,
 }
 
 impl Display for DoneResponse {
@@ -356,8 +371,28 @@ mod tests {
         let data = build_sentence(&[b"!done", b".tag=a1a2a3a4-b1b2-c1c2-d1d2-d3d4d5d6d7d8"]);
         let response = parse_response(&data).unwrap();
         match response {
-            CommandResponse::Done(done) => assert_eq!(done.tag, TEST_TAG),
+            CommandResponse::Done(done) => {
+                assert_eq!(done.tag, TEST_TAG);
+                assert!(done.attributes.is_empty());
+            }
             other => panic!("expected Done, got {:?}", other),
+        }
+    }
+
+    /// panel-olt fork: `print count-only` responde `!done` con `=ret=<n>`, antes o después del tag.
+    #[test]
+    fn test_parse_done_with_ret_in_any_order() {
+        for data in [
+            build_sentence(&[b"!done", b"=ret=2050", b".tag=a1a2a3a4-b1b2-c1c2-d1d2-d3d4d5d6d7d8"]),
+            build_sentence(&[b"!done", b".tag=a1a2a3a4-b1b2-c1c2-d1d2-d3d4d5d6d7d8", b"=ret=2050"]),
+        ] {
+            match parse_response(&data).unwrap() {
+                CommandResponse::Done(done) => {
+                    assert_eq!(done.tag, TEST_TAG);
+                    assert_eq!(done.attributes.get("ret"), Some(&Some(String::from("2050"))));
+                }
+                other => panic!("expected Done, got {:?}", other),
+            }
         }
     }
 

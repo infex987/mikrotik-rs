@@ -528,7 +528,7 @@ async fn concurrent_commands() {
     let dones_for = |tag| {
         events
             .iter()
-            .filter(|e| matches!(e, Event::Done { tag: t } if *t == tag))
+            .filter(|e| matches!(e, Event::Done { tag: t, .. } if *t == tag))
             .count()
     };
 
