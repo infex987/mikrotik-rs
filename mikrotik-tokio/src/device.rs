@@ -20,7 +20,10 @@ use crate::error::{DeviceError, DeviceResult};
 /// Internal command sent from the [`MikrotikDevice`] handle to the actor task.
 struct DeviceCommand {
     command: Command,
-    respond_to: mpsc::Sender<Event>,
+    // panel-olt fork: canal SIN límite por comando. Con el de capacidad 16 original, en cuanto
+    // llegaban más de 15 filas de golpe (un trozo de 8 KiB) el actor no podía encolar, quitaba
+    // el tag y mandaba `/cancel`: las listas largas salían cortadas en la fila 16.
+    respond_to: mpsc::UnboundedSender<Event>,
 }
 
 /// A client for interacting with `MikroTik` devices.
@@ -128,8 +131,10 @@ impl MikrotikDevice {
     ///
     /// Returns `DeviceError::Actor(ActorError::CommandSendFailed)` if the
     /// connection actor has shut down.
-    pub async fn send_command(&self, command: Command) -> DeviceResult<mpsc::Receiver<Event>> {
-        let (response_tx, response_rx) = mpsc::channel::<Event>(16);
+    pub async fn send_command(&self, command: Command) -> DeviceResult<mpsc::UnboundedReceiver<Event>> {
+        // panel-olt fork: sin límite, para que el actor nunca descarte ni cancele un comando vivo
+        // porque su consumidor tarde un momento en leer. Soltar el receptor sigue cancelando.
+        let (response_tx, response_rx) = mpsc::unbounded_channel::<Event>();
 
         self.cmd_tx
             .send(DeviceCommand {
@@ -211,7 +216,7 @@ where
 {
     let (mut rd, mut wr) = tokio::io::split(stream);
     let mut buf = vec![0u8; 8192];
-    let mut response_map: HashMap<Tag, mpsc::Sender<Event>> = HashMap::new();
+    let mut response_map: HashMap<Tag, mpsc::UnboundedSender<Event>> = HashMap::new();
     let mut shutdown = false;
 
     while !shutdown {
@@ -279,15 +284,17 @@ where
 
 /// Route a protocol event to the appropriate per-command channel.
 fn route_event(
-    response_map: &mut HashMap<Tag, mpsc::Sender<Event>>,
+    response_map: &mut HashMap<Tag, mpsc::UnboundedSender<Event>>,
     conn: &mut Connection,
     event: Event,
 ) {
     match &event {
         Event::Reply { tag, .. } => {
             let tag = *tag;
+            // Con canal sin límite, `send` solo falla si el receptor se soltó: entonces sí se
+            // cancela el comando en el router.
             if let Some(sender) = response_map.get(&tag)
-                && sender.try_send(event).is_err()
+                && sender.send(event).is_err()
             {
                 response_map.remove(&tag);
                 let _ = conn.cancel_command(tag);
@@ -296,12 +303,12 @@ fn route_event(
         Event::Done { tag } | Event::Empty { tag } | Event::Trap { tag, .. } => {
             let tag = *tag;
             if let Some(sender) = response_map.remove(&tag) {
-                let _ = sender.try_send(event);
+                let _ = sender.send(event);
             }
         }
         Event::Fatal { .. } => {
             for (_, sender) in response_map.drain() {
-                let _ = sender.try_send(event.clone());
+                let _ = sender.send(event.clone());
             }
         }
     }

@@ -200,6 +200,54 @@ async fn send_command_receive_reply() {
     mock.await.unwrap();
 }
 
+/// panel-olt fork: una lista larga que llega DE GOLPE (un solo write, como un trozo de 8 KiB del
+/// router) tiene que llegar entera. Con el canal original de 16 el actor cancelaba el comando
+/// en la fila 16: así se cortaban `/ip/address/print` y `/log/print` en producción.
+#[tokio::test]
+async fn long_list_in_one_burst_is_not_truncated() {
+    const FILAS: usize = 100;
+    let (listener, addr) = mock_listener().await;
+
+    let mock = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut mock = MockStream::new(stream);
+        let words = mock.read_sentence().await;
+        let login_tag = extract_tag(&words);
+        mock.write_all(&encode_done(&login_tag)).await;
+
+        let words = mock.read_sentence().await;
+        assert_eq!(words[0], "/ip/address/print");
+        let cmd_tag = extract_tag(&words);
+        let mut response = Vec::new();
+        for i in 0..FILAS {
+            let address = format!("10.0.{i}.1/24");
+            response.extend_from_slice(&encode_reply(&cmd_tag, &[("address", address.as_str())]));
+        }
+        response.extend_from_slice(&encode_done(&cmd_tag));
+        mock.write_all(&response).await;
+        // Mantener la conexión abierta hasta que el cliente termine de leer.
+        let _ = mock.read_sentence().await;
+    });
+
+    let device = MikrotikDevice::connect(&addr, "admin", Some("password")).await.unwrap();
+    let cmd = CommandBuilder::new().command("/ip/address/print").build();
+    let mut rx = device.send_command(cmd).await.unwrap();
+    // El consumidor no lee hasta que TODO está en camino: el peor caso para un canal acotado.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let mut filas = 0;
+    loop {
+        match rx.recv().await.expect("el canal no se puede cerrar antes del !done") {
+            Event::Reply { .. } => filas += 1,
+            Event::Done { .. } => break,
+            other => panic!("evento inesperado: {other:?}"),
+        }
+    }
+    assert_eq!(filas, FILAS);
+    drop(device);
+    mock.abort();
+}
+
 #[tokio::test]
 async fn login_failure() {
     let (listener, addr) = mock_listener().await;
@@ -305,7 +353,7 @@ async fn concurrent_commands() {
     // Each receiver should get its own reply + done (responses arrive in reverse)
     // But each channel only receives events for its own tag.
     // Collect until we see a terminal event (Done).
-    async fn collect_until_done(rx: &mut tokio::sync::mpsc::Receiver<Event>) -> Vec<Event> {
+    async fn collect_until_done(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Event>) -> Vec<Event> {
         let mut events = Vec::new();
         while let Some(event) = rx.recv().await {
             let is_terminal = matches!(&event, Event::Done { .. } | Event::Empty { .. });
